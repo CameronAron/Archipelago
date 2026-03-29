@@ -8,8 +8,6 @@ from NetUtils import ClientStatus
 import worlds._bizhawk as bizhawk
 from worlds._bizhawk.client import BizHawkClient
 
-import time
-
 from .constants import (
     GAME_NAME,
     SYSTEM_NAME,
@@ -19,6 +17,7 @@ from .constants import (
     LIVES_ADDR,
     OVERWORLD_Y_ADDR,
     OVERWORLD_X_ADDR,
+    INPUT_PRESSED_ADDR,
     INPUT_HELD_ADDR,
     P_METER_ADDR,
     PROGRESS_FLAGS_ADDR,
@@ -108,6 +107,7 @@ class SMB3BizHawkClient(BizHawkClient):
                     (LIVES_ADDR, 1, SYSTEM_BUS_DOMAIN),
                     (OVERWORLD_Y_ADDR, 1, SYSTEM_BUS_DOMAIN),
                     (OVERWORLD_X_ADDR, 1, SYSTEM_BUS_DOMAIN),
+                    (INPUT_PRESSED_ADDR, 1, SYSTEM_BUS_DOMAIN),
                     (INPUT_HELD_ADDR, 1, SYSTEM_BUS_DOMAIN),
                     (P_METER_ADDR, 1, SYSTEM_BUS_DOMAIN),
                     (PROGRESS_FLAGS_ADDR, PROGRESS_FLAGS_SIZE, SYSTEM_BUS_DOMAIN),
@@ -122,10 +122,11 @@ class SMB3BizHawkClient(BizHawkClient):
         lives = reads[1][0]
         overworld_y = reads[2][0]
         overworld_x = reads[3][0]
-        input_held = reads[4][0]
-        p_meter = reads[5][0]
-        progress_flags = reads[6]
-        inventory = reads[7]
+        input_pressed = reads[4][0]
+        input_held = reads[5][0]
+        p_meter = reads[6][0]
+        progress_flags = reads[7]
+        inventory = reads[8]
 
         await self.process_received_items(ctx, lives, inventory)
         inventory = await self.sanitize_inventory(ctx, inventory)
@@ -360,3 +361,5 @@ class SMB3BizHawkClient(BizHawkClient):
             return bytes(inventory_list)
 
         return inventory
+    
+    
