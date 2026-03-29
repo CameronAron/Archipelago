@@ -54,6 +54,8 @@ class SMB3BizHawkClient(BizHawkClient):
         self.has_fortress_access = False
         self.has_castle_access = False
 
+        self.last_sent_lua_state: tuple[bool, bool, bool] | None = None
+
     async def validate_rom(self, ctx: "BizHawkClientContext") -> bool:
         try:
             system_bus_size = await bizhawk.get_memory_size(ctx.bizhawk_ctx, SYSTEM_BUS_DOMAIN)
@@ -70,7 +72,7 @@ class SMB3BizHawkClient(BizHawkClient):
         try:
             rom_hash = await bizhawk.get_hash(ctx.bizhawk_ctx)
             if not self.logged_hash:
-                logger.info(f"SMB3 development ROM hash: {rom_hash}")
+                #logger.info(f"SMB3 development ROM hash: {rom_hash}")
                 self.logged_hash = True
         except bizhawk.RequestFailedError:
             pass
@@ -85,6 +87,7 @@ class SMB3BizHawkClient(BizHawkClient):
         self.has_p_meter_unlock = False
         self.has_fortress_access = False
         self.has_castle_access = False
+        self.last_sent_lua_state = None
 
         self.previous_world = None
         return True
@@ -131,11 +134,48 @@ class SMB3BizHawkClient(BizHawkClient):
         await self.process_received_items(ctx, lives, inventory)
         inventory = await self.sanitize_inventory(ctx, inventory)
         inventory = await self.process_pending_inventory(ctx, inventory)
+        await self.push_lua_state(ctx)
         await self.enforce_p_meter_lock(ctx, p_meter)
         await self.check_world_1_locations(ctx, progress_flags)
         await self.check_goal(ctx, current_world)
 
         self.previous_world = current_world
+
+    async def push_lua_state(self, ctx: "BizHawkClientContext") -> None:
+        state_tuple = (
+            self.has_fortress_access,
+            self.has_castle_access,
+            self.has_p_meter_unlock,
+        )
+
+        if self.last_sent_lua_state == state_tuple:
+            return
+
+        #logger.info(
+        #    "SMB3: Pushing Lua state - "
+        #    f"fortress={self.has_fortress_access}, "
+        #    f"castle={self.has_castle_access}, "
+        #    f"p_meter={self.has_p_meter_unlock}"
+        #)
+
+        try:
+            await bizhawk.send_requests(
+                ctx.bizhawk_ctx,
+                [
+                    {
+                        "type": "SMB3_SET_STATE",
+                        "fortress_access": self.has_fortress_access,
+                        "castle_access": self.has_castle_access,
+                        "p_meter_unlock": self.has_p_meter_unlock,
+                        "enabled": True,
+                    }
+                ],
+            )
+        except bizhawk.RequestFailedError:
+            logger.warning("SMB3: Failed to push Lua state")
+            return
+
+        self.last_sent_lua_state = state_tuple
 
     async def check_world_1_locations(self, ctx: "BizHawkClientContext", progress_flags: bytes) -> None:
         locations_to_send: list[int] = []
@@ -205,7 +245,8 @@ class SMB3BizHawkClient(BizHawkClient):
                 self.received_index += 1
                 continue
 
-            logger.info(f"SMB3: Applying item: {item_name}")
+            #logger.info(f"SMB3: Applying item: {item_name}")
+            await self.show_item_popup(ctx, item_name)
 
             if item_name == "P-Meter Unlock":
                 self.has_p_meter_unlock = True
@@ -258,7 +299,7 @@ class SMB3BizHawkClient(BizHawkClient):
                     return inventory
 
                 inventory_list[i] = item_value
-                logger.info(f"SMB3: Inserted {item_name} into inventory slot {i}")
+                #logger.info(f"SMB3: Inserted {item_name} into inventory slot {i}")
                 return bytes(inventory_list)
 
         self.pending_inventory_items.append(item_name)
@@ -284,7 +325,7 @@ class SMB3BizHawkClient(BizHawkClient):
             logger.warning(f"SMB3: Failed to write lives (+{amount})")
             return current_lives
 
-        logger.info(f"SMB3: Added {amount} life/lives. {current_lives} -> {new_lives}")
+        #logger.info(f"SMB3: Added {amount} life/lives. {current_lives} -> {new_lives}")
         return new_lives
 
     async def enforce_p_meter_lock(
@@ -357,9 +398,18 @@ class SMB3BizHawkClient(BizHawkClient):
             return inventory
 
         if write_result:
-            logger.info("SMB3: Removed unsupported whistle(s) from inventory")
+            #logger.info("SMB3: Removed unsupported whistle(s) from inventory")
             return bytes(inventory_list)
 
         return inventory
+    
+    async def show_item_popup(self, ctx: "BizHawkClientContext", item_name: str) -> None:
+        try:
+            await bizhawk.display_message(
+                ctx.bizhawk_ctx,
+                f"Received: {item_name}",
+            )
+        except bizhawk.RequestFailedError:
+            logger.warning(f"SMB3: Failed to display item popup for {item_name}")
     
     
