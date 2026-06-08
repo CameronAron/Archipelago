@@ -22,8 +22,8 @@ SOFTWARE.
 
 local SCRIPT_VERSION = 1
 
--- Set to log incoming requests
--- Will cause lag due to large console output
+-- Set to true to log all incoming requests to the console.
+-- Will cause lag due to large console output.
 local DEBUG = false
 
 --[[
@@ -197,6 +197,19 @@ Response:
     Additional Fields:
     - `value` (`number`): The number of seconds to set the interval to
 
+- `SMB3_SET_STATE`  
+    SMB3-specific request sent by the Python client whenever the player's
+    access flags change.  Updates the Lua-side smb3_state table which drives
+    the frame-start gate (overworld node blocking and P-Meter lock).
+
+    Expected Response Type: `SMB3_SET_STATE_RESPONSE`
+
+    Additional Fields (all optional; omitted fields are left unchanged):
+    - `fortress_access` (`boolean`): Player has received World 1 Fortress Access
+    - `castle_access`   (`boolean`): Player has received World 1 Castle Access
+    - `p_meter_unlock`  (`boolean`): Player has received P-Meter Unlock
+    - `enabled`         (`boolean`): Master switch; set false to disable all gating
+
 
 ### Response Types
 
@@ -260,6 +273,9 @@ Response:
 - `SET_MESSAGE_INTERVAL_RESPONSE`  
     Acknowledges `SET_MESSAGE_INTERVAL`.
 
+- `SMB3_SET_STATE_RESPONSE`  
+    Acknowledges `SMB3_SET_STATE`.
+
 - `ERROR`  
     Signifies that something has gone wrong while processing a request.
 
@@ -287,109 +303,144 @@ end
 
 local base64 = require("base64")
 local socket = require("socket")
-local json = require("json")
+local json   = require("json")
 
-local SOCKET_PORT_FIRST = 43055
+local SOCKET_PORT_FIRST      = 43055
 local SOCKET_PORT_RANGE_SIZE = 5
-local SOCKET_PORT_LAST = SOCKET_PORT_FIRST + SOCKET_PORT_RANGE_SIZE
+local SOCKET_PORT_LAST       = SOCKET_PORT_FIRST + SOCKET_PORT_RANGE_SIZE
 
 local STATE_NOT_CONNECTED = 0
-local STATE_CONNECTED = 1
+local STATE_CONNECTED     = 1
 
-local server = nil
+local server        = nil
 local client_socket = nil
 
 local current_state = STATE_NOT_CONNECTED
 
-local timeout_timer = 0
-local message_timer = 0
+local timeout_timer  = 0
+local message_timer  = 0
 local message_interval = 0
-local prev_time = 0
-local current_time = 0
+local prev_time      = 0
+local current_time   = 0
 
-local locked = false
-
+local locked   = false
 local rom_hash = nil
+
+-- ── SMB3-specific state ───────────────────────────────────────────────────────
+--
+-- Updated by SMB3_SET_STATE requests from the Python client whenever the
+-- player's access flags change.  Consumed every frame start by
+-- smb3_frame_start_gate() to enforce overworld node blocking and P-Meter lock.
+--
+-- AP SRAM NOTE: The Python client reserves System Bus $7F00–$7F1F for
+-- Archipelago-specific save data (sentinel, received-item index, starting
+-- world).  This script does NOT read or write that range; all AP SRAM
+-- management is handled entirely from the Python side via normal WRITE
+-- requests routed through this connector.
 
 local smb3_state = {
     fortress_access = false,
-    castle_access = false,
-    p_meter_unlock = false,
-    enabled = true
+    castle_access   = false,
+    p_meter_unlock  = false,
+    enabled         = true,
 }
 
-local SMB3_WORLD_ADDR = 0x0727
+-- Memory addresses read directly by the frame-start gate (cheaper than routing
+-- through the Python client at 8 Hz for per-frame enforcement).
+local SMB3_WORLD_ADDR       = 0x0727
 local SMB3_OVERWORLD_Y_ADDR = 0x0075
 local SMB3_OVERWORLD_X_ADDR = 0x0079
-local SMB3_P_METER_ADDR = 0x03DD
+local SMB3_P_METER_ADDR     = 0x03DD
 
+-- Overworld tile coordinates for the locked map nodes.
+-- Must match FORTRESS_COORD_* and CASTLE_COORD_* in constants.py.
 local SMB3_FORTRESS_Y = 96
 local SMB3_FORTRESS_X = 96
-local SMB3_CASTLE_Y = 128
-local SMB3_CASTLE_X = 192
+local SMB3_CASTLE_Y   = 128
+local SMB3_CASTLE_X   = 192
 
-local last_gate_message = ""
+-- Throttle repeated gate messages to avoid spamming the OSD.
+local last_gate_message       = ""
 local last_gate_message_frame = -999999
 
-function queue_push (self, value)
+-- ── Queue helpers ─────────────────────────────────────────────────────────────
+
+function queue_push(self, value)
     self[self.right] = value
     self.right = self.right + 1
 end
 
-function queue_is_empty (self)
+function queue_is_empty(self)
     return self.right == self.left
 end
 
-function queue_shift (self)
-    value = self[self.left]
+function queue_shift(self)
+    local value = self[self.left]
     self[self.left] = nil
     self.left = self.left + 1
     return value
 end
 
-function new_queue ()
+function new_queue()
     local queue = {left = 1, right = 1}
     return setmetatable(queue, {__index = {is_empty = queue_is_empty, push = queue_push, shift = queue_shift}})
 end
 
 local message_queue = new_queue()
 
-function lock ()
+-- ── Lock / unlock helpers ────────────────────────────────────────────────────
+
+function lock()
     locked = true
     client_socket:settimeout(2)
 end
 
-function unlock ()
+function unlock()
     locked = false
     client_socket:settimeout(0)
 end
 
--- Start Custom Logic Functions
-local function smb3_get_locked_node_name()
-    local current_world = memory.read_u8(SMB3_WORLD_ADDR, "System Bus")
-    local overworld_y = memory.read_u8(SMB3_OVERWORLD_Y_ADDR, "System Bus")
-    local overworld_x = memory.read_u8(SMB3_OVERWORLD_X_ADDR, "System Bus")
+-- ── SMB3 frame-start gate ────────────────────────────────────────────────────
+--
+-- Registered as an onframestart callback so it runs before the Python client's
+-- per-tick reads.  Enforces two constraints every frame:
+--
+--   1. P-Meter lock  — zeroes $03DD if p_meter_unlock is false.
+--   2. Node blocking — if Mario is standing on a locked overworld node and
+--                      presses A, the A input is swallowed and a message is
+--                      shown.  This prevents entering the Fortress or Castle
+--                      without the corresponding access item.
 
+local function smb3_get_locked_node_name()
+    -- Only enforce gating while on World 1 (world index 0).
+    -- In Step 2 this will check the active world index against each world's
+    -- locked nodes once multi-world support is added.
+    local current_world = memory.read_u8(SMB3_WORLD_ADDR, "System Bus")
     if current_world ~= 0 then
         return nil
     end
 
-    if overworld_y == SMB3_FORTRESS_Y and overworld_x == SMB3_FORTRESS_X and not smb3_state.fortress_access then
+    local ow_y = memory.read_u8(SMB3_OVERWORLD_Y_ADDR, "System Bus")
+    local ow_x = memory.read_u8(SMB3_OVERWORLD_X_ADDR, "System Bus")
+
+    if ow_y == SMB3_FORTRESS_Y and ow_x == SMB3_FORTRESS_X and not smb3_state.fortress_access then
         return "World 1 Fortress"
     end
 
-    if overworld_y == SMB3_CASTLE_Y and overworld_x == SMB3_CASTLE_X and not smb3_state.castle_access then
+    if ow_y == SMB3_CASTLE_Y and ow_x == SMB3_CASTLE_X and not smb3_state.castle_access then
         return "World 1 Castle"
     end
 
     return nil
 end
 
-local function smb3_should_show_message(node_name)
+local function smb3_should_show_gate_message(node_name)
+    -- Show the message immediately on a new node, then throttle to once per
+    -- 120 frames (~2 seconds at 60 fps) to avoid OSD spam.
     local current_frame = emu.framecount()
 
     if last_gate_message ~= node_name then
-        last_gate_message = node_name
+        last_gate_message       = node_name
         last_gate_message_frame = current_frame
         return true
     end
@@ -407,9 +458,11 @@ local function smb3_enforce_p_meter_lock()
         return
     end
 
-    local current_p_meter = memory.read_u8(SMB3_P_METER_ADDR, "System Bus")
-
-    if current_p_meter ~= 0 then
+    -- Zero the P-Meter every frame it is non-zero.  The Python client mirrors
+    -- this check at ~8 Hz as a fallback, but the per-frame write here is the
+    -- primary enforcement path.
+    local p_meter = memory.read_u8(SMB3_P_METER_ADDR, "System Bus")
+    if p_meter ~= 0 then
         memory.write_u8(SMB3_P_METER_ADDR, 0, "System Bus")
     end
 end
@@ -426,74 +479,49 @@ local function smb3_frame_start_gate()
         return
     end
 
+    -- If the player is on a locked node and presses A, swallow the press.
     local input = joypad.get(1)
-
     if input["A"] then
         joypad.set({["A"] = false}, 1)
 
-        if smb3_should_show_message(node_name) then
+        if smb3_should_show_gate_message(node_name) then
             gui.addmessage(node_name .. " is locked by Archipelago.")
         end
     end
 end
--- End Custom Logic Functions
+
+-- ── Request handlers ─────────────────────────────────────────────────────────
 
 request_handlers = {
-    ["PING"] = function (req)
-        local res = {}
-
-        res["type"] = "PONG"
-
-        return res
+    ["PING"] = function(req)
+        return {type = "PONG"}
     end,
 
-    ["SYSTEM"] = function (req)
-        local res = {}
-
-        res["type"] = "SYSTEM_RESPONSE"
-        res["value"] = emu.getsystemid()
-
-        return res
+    ["SYSTEM"] = function(req)
+        return {type = "SYSTEM_RESPONSE", value = emu.getsystemid()}
     end,
 
-    ["PREFERRED_CORES"] = function (req)
-        local res = {}
-        local preferred_cores = client.getconfig().PreferredCores
+    ["PREFERRED_CORES"] = function(req)
+        local res = {type = "PREFERRED_CORES_RESPONSE", value = {}}
+        local preferred_cores   = client.getconfig().PreferredCores
         local systems_enumerator = preferred_cores.Keys:GetEnumerator()
-
-        res["type"] = "PREFERRED_CORES_RESPONSE"
-        res["value"] = {}
-
         while systems_enumerator:MoveNext() do
             res["value"][systems_enumerator.Current] = preferred_cores[systems_enumerator.Current]
         end
-
         return res
     end,
 
-    ["HASH"] = function (req)
-        local res = {}
-
-        res["type"] = "HASH_RESPONSE"
-        res["value"] = rom_hash
-
-        return res
+    ["HASH"] = function(req)
+        return {type = "HASH_RESPONSE", value = rom_hash}
     end,
 
-    ["MEMORY_SIZE"] = function (req)
-        local res = {}
-
-        res["type"] = "MEMORY_SIZE_RESPONSE"
-        res["value"] = memory.getmemorydomainsize(req["domain"])
-
-        return res
+    ["MEMORY_SIZE"] = function(req)
+        return {type = "MEMORY_SIZE_RESPONSE", value = memory.getmemorydomainsize(req["domain"])}
     end,
 
-    ["GUARD"] = function (req)
-        local res = {}
-        local expected_data = base64.decode(req["expected_data"])
-        local actual_data = memory.read_bytes_as_array(req["address"], #expected_data, req["domain"])
-
+    ["GUARD"] = function(req)
+        local expected_data    = base64.decode(req["expected_data"])
+        local actual_data      = memory.read_bytes_as_array(req["address"], #expected_data, req["domain"])
         local data_is_validated = true
         for i, byte in ipairs(actual_data) do
             if byte ~= expected_data[i] then
@@ -501,102 +529,60 @@ request_handlers = {
                 break
             end
         end
-
-        res["type"] = "GUARD_RESPONSE"
-        res["value"] = data_is_validated
-        res["address"] = req["address"]
-
-        return res
+        return {type = "GUARD_RESPONSE", value = data_is_validated, address = req["address"]}
     end,
 
-    ["LOCK"] = function (req)
-        local res = {}
-
-        res["type"] = "LOCKED"
+    ["LOCK"] = function(req)
         lock()
-
-        return res
+        return {type = "LOCKED"}
     end,
 
-    ["UNLOCK"] = function (req)
-        local res = {}
-
-        res["type"] = "UNLOCKED"
+    ["UNLOCK"] = function(req)
         unlock()
-
-        return res
+        return {type = "UNLOCKED"}
     end,
 
-    ["READ"] = function (req)
-        local res = {}
-
-        res["type"] = "READ_RESPONSE"
-        res["value"] = base64.encode(memory.read_bytes_as_array(req["address"], req["size"], req["domain"]))
-
-        return res
+    ["READ"] = function(req)
+        return {
+            type  = "READ_RESPONSE",
+            value = base64.encode(memory.read_bytes_as_array(req["address"], req["size"], req["domain"])),
+        }
     end,
 
-    ["WRITE"] = function (req)
-        local res = {}
-
-        res["type"] = "WRITE_RESPONSE"
+    ["WRITE"] = function(req)
         memory.write_bytes_as_array(req["address"], base64.decode(req["value"]), req["domain"])
-
-        return res
+        return {type = "WRITE_RESPONSE"}
     end,
 
-    ["DISPLAY_MESSAGE"] = function (req)
-        local res = {}
-
-        res["type"] = "DISPLAY_MESSAGE_RESPONSE"
+    ["DISPLAY_MESSAGE"] = function(req)
         message_queue:push(req["message"])
-
-        return res
+        return {type = "DISPLAY_MESSAGE_RESPONSE"}
     end,
 
-    ["SET_MESSAGE_INTERVAL"] = function (req)
-        local res = {}
-
-        res["type"] = "SET_MESSAGE_INTERVAL_RESPONSE"
+    ["SET_MESSAGE_INTERVAL"] = function(req)
         message_interval = req["value"]
-
-        return res
+        return {type = "SET_MESSAGE_INTERVAL_RESPONSE"}
     end,
 
-    ["SMB3_SET_STATE"] = function (req)
-        local res = {}
-
-        if req["fortress_access"] ~= nil then
-            smb3_state.fortress_access = req["fortress_access"]
-        end
-
-        if req["castle_access"] ~= nil then
-            smb3_state.castle_access = req["castle_access"]
-        end
-
-        if req["p_meter_unlock"] ~= nil then
-            smb3_state.p_meter_unlock = req["p_meter_unlock"]
-        end
-
-        if req["enabled"] ~= nil then
-            smb3_state.enabled = req["enabled"]
-        end
-
-        res["type"] = "SMB3_SET_STATE_RESPONSE"
-        return res
+    -- SMB3-specific: update access flags from the Python client.
+    -- The Python client sends this whenever has_fortress_access,
+    -- has_castle_access, or has_p_meter_unlock changes, so the frame-start
+    -- gate immediately reflects the new state without waiting for the next
+    -- Python tick.
+    ["SMB3_SET_STATE"] = function(req)
+        if req["fortress_access"] ~= nil then smb3_state.fortress_access = req["fortress_access"] end
+        if req["castle_access"]   ~= nil then smb3_state.castle_access   = req["castle_access"]   end
+        if req["p_meter_unlock"]  ~= nil then smb3_state.p_meter_unlock  = req["p_meter_unlock"]  end
+        if req["enabled"]         ~= nil then smb3_state.enabled         = req["enabled"]         end
+        return {type = "SMB3_SET_STATE_RESPONSE"}
     end,
 
-    ["default"] = function (req)
-        local res = {}
-
-        res["type"] = "ERROR"
-        res["err"] = "Unknown command: "..req["type"]
-
-        return res
+    ["default"] = function(req)
+        return {type = "ERROR", err = "Unknown command: " .. req["type"]}
     end,
 }
 
-function process_request (req)
+function process_request(req)
     if request_handlers[req["type"]] then
         return request_handlers[req["type"]](req)
     else
@@ -604,11 +590,11 @@ function process_request (req)
     end
 end
 
--- Receive data from AP client and send message back
-function send_receive ()
+-- ── Network loop ─────────────────────────────────────────────────────────────
+
+function send_receive()
     local message, err = client_socket:receive()
 
-    -- Handle errors
     if err == "closed" then
         if current_state == STATE_CONNECTED then
             print("Connection to client closed")
@@ -625,30 +611,26 @@ function send_receive ()
         return
     end
 
-    -- Reset timeout timer
     timeout_timer = 5
 
-    -- Process received data
     if DEBUG then
-        print("Received Message ["..emu.framecount().."]: "..'"'..message..'"')
+        print("Received Message [" .. emu.framecount() .. "]: " .. '"' .. message .. '"')
     end
 
     if message == "VERSION" then
-        client_socket:send(tostring(SCRIPT_VERSION).."\n")
+        client_socket:send(tostring(SCRIPT_VERSION) .. "\n")
     else
-        local res = {}
-        local data = json.decode(message)
+        local res                  = {}
+        local data                 = json.decode(message)
         local failed_guard_response = nil
+
         for i, req in ipairs(data) do
             if failed_guard_response ~= nil then
                 res[i] = failed_guard_response
             else
-                -- An error is more likely to cause an NLua exception than to return an error here
                 local status, response = pcall(process_request, req)
                 if status then
                     res[i] = response
-
-                    -- If the GUARD validation failed, skip the remaining commands
                     if response["type"] == "GUARD_RESPONSE" and not response["value"] then
                         failed_guard_response = response
                     end
@@ -659,14 +641,14 @@ function send_receive ()
             end
         end
 
-        client_socket:send(json.encode(res).."\n")
+        client_socket:send(json.encode(res) .. "\n")
     end
 end
 
-function initialize_server ()
+function initialize_server()
     local err
     local port = SOCKET_PORT_FIRST
-    local res = nil
+    local res  = nil
 
     server, err = socket.socket.tcp4()
     while res == nil and port <= SOCKET_PORT_LAST do
@@ -675,7 +657,6 @@ function initialize_server ()
             print(err)
             return
         end
-
         if res == nil then
             port = port + 1
         end
@@ -687,7 +668,6 @@ function initialize_server ()
     end
 
     res, err = server:listen(0)
-
     if err ~= nil then
         print(err)
         return
@@ -696,16 +676,16 @@ function initialize_server ()
     server:settimeout(0)
 end
 
-function main ()
+function main()
     while true do
         if server == nil then
             initialize_server()
         end
 
-        current_time = socket.socket.gettime()
+        current_time  = socket.socket.gettime()
         timeout_timer = timeout_timer - (current_time - prev_time)
         message_timer = message_timer - (current_time - prev_time)
-        prev_time = current_time
+        prev_time     = current_time
 
         if message_timer <= 0 and not message_queue:is_empty() then
             gui.addmessage(message_queue:shift())
@@ -715,11 +695,11 @@ function main ()
         if current_state == STATE_NOT_CONNECTED then
             if emu.framecount() % 30 == 0 then
                 print("Looking for client...")
-                local client, timeout = server:accept()
+                local c, timeout = server:accept()
                 if timeout == nil then
                     print("Client connected")
                     current_state = STATE_CONNECTED
-                    client_socket = client
+                    client_socket = c
                     server:close()
                     server = nil
                     client_socket:settimeout(0)
@@ -740,12 +720,14 @@ function main ()
     end
 end
 
-event.onexit(function ()
+event.onexit(function()
     print("\n-- Restarting Script --\n")
     if server ~= nil then
         server:close()
     end
 end)
+
+-- ── Entry point ───────────────────────────────────────────────────────────────
 
 if bizhawk_major < 2 or (bizhawk_major == 2 and bizhawk_minor < 7) then
     print("Must use BizHawk 2.7.0 or newer")
@@ -766,28 +748,25 @@ else
     print("Waiting for client to connect. This may take longer the more instances of this script you have open at once.\n")
 
     local co = coroutine.create(main)
-    function tick ()
+    function tick()
         local status, err = coroutine.resume(co)
-
         if not status and err ~= "cannot resume dead coroutine" then
-            print("\nERROR: "..err)
+            print("\nERROR: " .. err)
             print("Consider reporting this crash.\n")
-    
             if server ~= nil then
                 server:close()
             end
-
             co = coroutine.create(main)
         end
     end
 
     -- Gambatte has a setting which can cause script execution to become
-    -- misaligned, so for GB and GBC we explicitly set the callback on
-    -- vblank instead.
+    -- misaligned, so for GB/GBC we explicitly set the callback on vblank.
     -- https://github.com/TASEmulators/BizHawk/issues/3711
     if emu.getsystemid() == "GB" or emu.getsystemid() == "GBC" or emu.getsystemid() == "SGB" then
         event.onmemoryexecute(tick, 0x40, "tick", "System Bus")
     else
+        -- NES (SMB3): gate runs on frame start, networking runs on frame end.
         event.onframestart(smb3_frame_start_gate, "smb3_frame_start_gate")
         event.onframeend(tick)
     end
