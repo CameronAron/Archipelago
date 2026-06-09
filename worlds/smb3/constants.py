@@ -87,11 +87,12 @@ CASTLE_COORD_X   = 192
 # buffer as one byte per 16x16 map column across up to four horizontal screens;
 # bits 7-1 cover rows 0-6 and bit 0 covers the bottom course row.
 #
-# The numbered-level coordinates below were extracted from the bundled SMB3 USA
-# ROM overworld-map data at file offsets 0x185BA-0x19071.  Fortress and pyramid
-# coordinates use the ROM's map-clear tile positions (0x67 for fortresses and
-# 0x68 for the World 2 pyramid), matching the already-verified World 1 fortress
-# flag at offset 0x06 / mask 0x08.
+# The numbered-level coordinates below are candidate mappings extracted from
+# the bundled SMB3 USA ROM overworld-map data at file offsets 0x185BA-0x19071.
+# Fortress and pyramid coordinates use the ROM's map-clear tile positions (0x67
+# for fortresses and 0x68 for the World 2 pyramid), matching the already-verified
+# World 1 fortress flag at offset 0x06 / mask 0x08.  These later-world mappings
+# still need emulator-side validation before they should be treated as final.
 
 PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
     0: {
@@ -187,6 +188,19 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
 # the original World 1-only table.
 WORLD_1_PROGRESS_FLAGS = PROGRESS_FLAGS_BY_WORLD[0]
 
+
+# ─── Progression/access item name groups ──────────────────────────────────────
+
+WORLD_UNLOCK_ITEM_NAMES = tuple(f"World {world} Unlock" for world in range(1, 9))
+FORTRESS_ACCESS_ITEM_NAMES = tuple(f"World {world} Fortress Access" for world in range(1, 9))
+CASTLE_ACCESS_ITEM_NAMES = tuple(f"World {world} Castle Access" for world in range(1, 9))
+ACCESS_ITEM_NAMES = (
+    "P-Meter Unlock",
+    *WORLD_UNLOCK_ITEM_NAMES,
+    *FORTRESS_ACCESS_ITEM_NAMES,
+    *CASTLE_ACCESS_ITEM_NAMES,
+)
+
 # ─── Item lookup tables ───────────────────────────────────────────────────────
 
 ITEM_CODE_TO_NAME: dict[int, str] = {
@@ -204,6 +218,18 @@ ITEM_CODE_TO_NAME: dict[int, str] = {
     1011: "3-Up",
     1012: "Beat World 1 Castle",
 }
+
+_next_item_id = 1013
+for _access_item_name in (
+    *WORLD_UNLOCK_ITEM_NAMES,
+    *FORTRESS_ACCESS_ITEM_NAMES,
+    *CASTLE_ACCESS_ITEM_NAMES,
+):
+    if _access_item_name not in ITEM_CODE_TO_NAME.values():
+        ITEM_CODE_TO_NAME[_next_item_id] = _access_item_name
+        _next_item_id += 1
+
+del _access_item_name, _next_item_id
 
 # Item name → byte value written into the game's 28-slot SRAM inventory.
 # Values confirmed against the SMB3 USA ROM item-render loop in PRG bank 26.
