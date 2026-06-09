@@ -81,25 +81,125 @@ FORTRESS_COORD_X = 96
 CASTLE_COORD_Y   = 128
 CASTLE_COORD_X   = 192
 
-# ─── World 1 level-completion progress flags ─────────────────────────────────
-# Maps location ID → (byte offset from PROGRESS_FLAGS_ADDR, bit mask).
-# The client reads PROGRESS_FLAGS_SIZE bytes starting at PROGRESS_FLAGS_ADDR
-# and AND-masks the appropriate byte to detect whether a level is cleared.
+# ─── Overworld level-completion progress flags ────────────────────────────────
+# Maps current_world (0-based) -> location ID -> (byte offset, bit mask) in the
+# 64-byte PROGRESS_FLAGS_ADDR completion buffer.  Data Crystal documents this
+# buffer as one byte per 16x16 map column across up to four horizontal screens;
+# bits 7-1 cover rows 0-6 and bit 0 covers the bottom course row.
 #
-# Verified against the SMB3 USA ROM binary:
-#   • STA $7D04/$7D06/$7D08/$7D0A patterns confirmed in PRG banks 2 and 30.
-#   • INC $0727 (world-counter advance after World 1 Castle) confirmed at
-#     PRG bank 30, file offset 0x3D0A1.
+# The numbered-level coordinates below are candidate mappings extracted from
+# the bundled SMB3 USA ROM overworld-map data at file offsets 0x185BA-0x19071.
+# Fortress and pyramid coordinates use the ROM's map-clear tile positions (0x67
+# for fortresses and 0x68 for the World 2 pyramid), matching the already-verified
+# World 1 fortress flag at offset 0x06 / mask 0x08.  These later-world mappings
+# still need emulator-side validation before they should be treated as final.
 
-WORLD_1_PROGRESS_FLAGS: dict[int, tuple[int, int]] = {
-    LOCATION_NAME_TO_ID["World 1-1 Clear"]:        (0x04, 0x80),
-    LOCATION_NAME_TO_ID["World 1-2 Clear"]:        (0x08, 0x80),
-    LOCATION_NAME_TO_ID["World 1-3 Clear"]:        (0x0A, 0x80),
-    LOCATION_NAME_TO_ID["World 1-4 Clear"]:        (0x0A, 0x20),
-    LOCATION_NAME_TO_ID["World 1-5 Clear"]:        (0x04, 0x01),
-    LOCATION_NAME_TO_ID["World 1-6 Clear"]:        (0x08, 0x01),
-    LOCATION_NAME_TO_ID["World 1 Fortress Clear"]: (0x06, 0x08),
+PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
+    0: {
+        LOCATION_NAME_TO_ID["World 1-1 Clear"]: (0x04, 0x80),
+        LOCATION_NAME_TO_ID["World 1-2 Clear"]: (0x08, 0x80),
+        LOCATION_NAME_TO_ID["World 1-3 Clear"]: (0x0A, 0x80),
+        LOCATION_NAME_TO_ID["World 1-4 Clear"]: (0x0A, 0x20),
+        LOCATION_NAME_TO_ID["World 1-5 Clear"]: (0x04, 0x01),
+        LOCATION_NAME_TO_ID["World 1-6 Clear"]: (0x08, 0x01),
+        LOCATION_NAME_TO_ID["World 1 Fortress Clear"]: (0x06, 0x08),
+    },
+    1: {
+        LOCATION_NAME_TO_ID["World 2-1 Clear"]: (0x04, 0x20),
+        LOCATION_NAME_TO_ID["World 2-2 Clear"]: (0x08, 0x80),
+        LOCATION_NAME_TO_ID["World 2-3 Clear"]: (0x0C, 0x40),
+        LOCATION_NAME_TO_ID["World 2-4 Clear"]: (0x12, 0x08),
+        LOCATION_NAME_TO_ID["World 2-5 Clear"]: (0x10, 0x01),
+        LOCATION_NAME_TO_ID["World 2 Fortress Clear"]: (0x08, 0x20),
+        LOCATION_NAME_TO_ID["World 2 Pyramid Clear"]: (0x10, 0x04),
+    },
+    2: {
+        LOCATION_NAME_TO_ID["World 3-1 Clear"]: (0x04, 0x20),
+        LOCATION_NAME_TO_ID["World 3-2 Clear"]: (0x24, 0x80),
+        LOCATION_NAME_TO_ID["World 3-3 Clear"]: (0x08, 0x80),
+        LOCATION_NAME_TO_ID["World 3-4 Clear"]: (0x2C, 0x80),
+        LOCATION_NAME_TO_ID["World 3-5 Clear"]: (0x0C, 0x20),
+        LOCATION_NAME_TO_ID["World 3-6 Clear"]: (0x00, 0x10),
+        LOCATION_NAME_TO_ID["World 3-7 Clear"]: (0x04, 0x10),
+        LOCATION_NAME_TO_ID["World 3-8 Clear"]: (0x20, 0x10),
+        LOCATION_NAME_TO_ID["World 3-9 Clear"]: (0x12, 0x08),
+        LOCATION_NAME_TO_ID["World 3 Fortress 1 Clear"]: (0x18, 0x40),
+        LOCATION_NAME_TO_ID["World 3 Fortress 2 Clear"]: (0x26, 0x10),
+    },
+    3: {
+        LOCATION_NAME_TO_ID["World 4-1 Clear"]: (0x1C, 0x01),
+        LOCATION_NAME_TO_ID["World 4-2 Clear"]: (0x1C, 0x04),
+        LOCATION_NAME_TO_ID["World 4-3 Clear"]: (0x18, 0x04),
+        LOCATION_NAME_TO_ID["World 4-4 Clear"]: (0x14, 0x01),
+        LOCATION_NAME_TO_ID["World 4-5 Clear"]: (0x0C, 0x10),
+        LOCATION_NAME_TO_ID["World 4-6 Clear"]: (0x0C, 0x40),
+        LOCATION_NAME_TO_ID["World 4 Fortress 1 Clear"]: (0x0E, 0x20),
+        LOCATION_NAME_TO_ID["World 4 Fortress 2 Clear"]: (0x14, 0x04),
+    },
+    4: {
+        LOCATION_NAME_TO_ID["World 5-1 Clear"]: (0x02, 0x40),
+        LOCATION_NAME_TO_ID["World 5-2 Clear"]: (0x04, 0x80),
+        LOCATION_NAME_TO_ID["World 5-3 Clear"]: (0x08, 0x80),
+        LOCATION_NAME_TO_ID["World 5-4 Clear"]: (0x1A, 0x02),
+        LOCATION_NAME_TO_ID["World 5-5 Clear"]: (0x1E, 0x04),
+        LOCATION_NAME_TO_ID["World 5-6 Clear"]: (0x1E, 0x01),
+        LOCATION_NAME_TO_ID["World 5-7 Clear"]: (0x1C, 0x01),
+        LOCATION_NAME_TO_ID["World 5-8 Clear"]: (0x18, 0x01),
+        LOCATION_NAME_TO_ID["World 5-9 Clear"]: (0x16, 0x01),
+        LOCATION_NAME_TO_ID["World 5 Fortress 1 Clear"]: (0x04, 0x20),
+        LOCATION_NAME_TO_ID["World 5 Fortress 2 Clear"]: (0x14, 0x01),
+    },
+    5: {
+        LOCATION_NAME_TO_ID["World 6-1 Clear"]: (0x16, 0x40),
+        LOCATION_NAME_TO_ID["World 6-2 Clear"]: (0x2A, 0x80),
+        LOCATION_NAME_TO_ID["World 6-3 Clear"]: (0x0C, 0x20),
+        LOCATION_NAME_TO_ID["World 6-4 Clear"]: (0x00, 0x04),
+        LOCATION_NAME_TO_ID["World 6-5 Clear"]: (0x0C, 0x04),
+        LOCATION_NAME_TO_ID["World 6-6 Clear"]: (0x24, 0x04),
+        LOCATION_NAME_TO_ID["World 6-7 Clear"]: (0x14, 0x08),
+        LOCATION_NAME_TO_ID["World 6-8 Clear"]: (0x20, 0x02),
+        LOCATION_NAME_TO_ID["World 6-9 Clear"]: (0x1C, 0x08),
+        LOCATION_NAME_TO_ID["World 6-10 Clear"]: (0x04, 0x01),
+        LOCATION_NAME_TO_ID["World 6 Fortress 1 Clear"]: (0x1A, 0x40),
+        LOCATION_NAME_TO_ID["World 6 Fortress 2 Clear"]: (0x18, 0x08),
+        LOCATION_NAME_TO_ID["World 6 Fortress 3 Clear"]: (0x12, 0x01),
+    },
+    6: {
+        LOCATION_NAME_TO_ID["World 7-1 Clear"]: (0x12, 0x40),
+        LOCATION_NAME_TO_ID["World 7-2 Clear"]: (0x13, 0x10),
+        LOCATION_NAME_TO_ID["World 7-3 Clear"]: (0x1E, 0x10),
+        LOCATION_NAME_TO_ID["World 7-4 Clear"]: (0x1A, 0x20),
+        LOCATION_NAME_TO_ID["World 7-5 Clear"]: (0x00, 0x01),
+        LOCATION_NAME_TO_ID["World 7-6 Clear"]: (0x03, 0x04),
+        LOCATION_NAME_TO_ID["World 7-7 Clear"]: (0x06, 0x04),
+        LOCATION_NAME_TO_ID["World 7-8 Clear"]: (0x0A, 0x02),
+        LOCATION_NAME_TO_ID["World 7-9 Clear"]: (0x08, 0x01),
+        LOCATION_NAME_TO_ID["World 7 Fortress 1 Clear"]: (0x1F, 0x80),
+        LOCATION_NAME_TO_ID["World 7 Fortress 2 Clear"]: (0x0C, 0x01),
+    },
+    7: {
+        LOCATION_NAME_TO_ID["World 8-1 Clear"]: (0x34, 0x04),
+        LOCATION_NAME_TO_ID["World 8-2 Clear"]: (0x12, 0x02),
+        LOCATION_NAME_TO_ID["World 8 Fortress Clear"]: (0x38, 0x04),
+    },
 }
+
+# Backward-compatible alias for tests and any third-party tooling that imported
+# the original World 1-only table.
+WORLD_1_PROGRESS_FLAGS = PROGRESS_FLAGS_BY_WORLD[0]
+
+
+# ─── Progression/access item name groups ──────────────────────────────────────
+
+WORLD_UNLOCK_ITEM_NAMES = tuple(f"World {world} Unlock" for world in range(1, 9))
+FORTRESS_ACCESS_ITEM_NAMES = tuple(f"World {world} Fortress Access" for world in range(1, 9))
+CASTLE_ACCESS_ITEM_NAMES = tuple(f"World {world} Castle Access" for world in range(1, 9))
+ACCESS_ITEM_NAMES = (
+    "P-Meter Unlock",
+    *WORLD_UNLOCK_ITEM_NAMES,
+    *FORTRESS_ACCESS_ITEM_NAMES,
+    *CASTLE_ACCESS_ITEM_NAMES,
+)
 
 # ─── Item lookup tables ───────────────────────────────────────────────────────
 
@@ -118,6 +218,18 @@ ITEM_CODE_TO_NAME: dict[int, str] = {
     1011: "3-Up",
     1012: "Beat World 1 Castle",
 }
+
+_next_item_id = 1013
+for _access_item_name in (
+    *WORLD_UNLOCK_ITEM_NAMES,
+    *FORTRESS_ACCESS_ITEM_NAMES,
+    *CASTLE_ACCESS_ITEM_NAMES,
+):
+    if _access_item_name not in ITEM_CODE_TO_NAME.values():
+        ITEM_CODE_TO_NAME[_next_item_id] = _access_item_name
+        _next_item_id += 1
+
+del _access_item_name, _next_item_id
 
 # Item name → byte value written into the game's 28-slot SRAM inventory.
 # Values confirmed against the SMB3 USA ROM item-render loop in PRG bank 26.

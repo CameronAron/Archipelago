@@ -27,8 +27,12 @@ from .constants import (
     AP_RECEIVED_INDEX_ADDR,
     AP_RECEIVED_INDEX_SIZE,
     AP_STARTING_WORLD_ADDR,
-    WORLD_1_PROGRESS_FLAGS,
+    ACCESS_ITEM_NAMES,
+    CASTLE_ACCESS_ITEM_NAMES,
     CASTLE_LOCATION_ID,
+    FORTRESS_ACCESS_ITEM_NAMES,
+    PROGRESS_FLAGS_BY_WORLD,
+    WORLD_UNLOCK_ITEM_NAMES,
     ITEM_CODE_TO_NAME,
     INVENTORY_ITEM_VALUES,
     LIFE_ITEM_VALUES,
@@ -74,6 +78,9 @@ class SMB3BizHawkClient(BizHawkClient):
         self.has_p_meter_unlock: bool = False
         self.has_fortress_access: bool = False
         self.has_castle_access: bool = False
+        self.unlocked_worlds: set[int] = set()
+        self.fortress_access_worlds: set[int] = set()
+        self.castle_access_worlds: set[int] = set()
 
         # Cache to avoid hammering Lua with identical state updates.
         self.last_sent_lua_state: tuple[bool, bool, bool] | None = None
@@ -119,6 +126,9 @@ class SMB3BizHawkClient(BizHawkClient):
         self.has_p_meter_unlock       = False
         self.has_fortress_access      = False
         self.has_castle_access        = False
+        self.unlocked_worlds          = set()
+        self.fortress_access_worlds   = set()
+        self.castle_access_worlds     = set()
         self.last_sent_lua_state      = None
         self.starting_world           = 0
         self.received_index           = 0
@@ -178,7 +188,7 @@ class SMB3BizHawkClient(BizHawkClient):
 
         await self.push_lua_state(ctx)
         await self.enforce_p_meter_lock(ctx, p_meter)
-        await self.check_world_1_locations(ctx, progress_flags)
+        await self.check_overworld_locations(ctx, current_world, progress_flags)
         await self.check_goal(ctx, current_world)
 
         self.previous_world = current_world
@@ -309,18 +319,27 @@ class SMB3BizHawkClient(BizHawkClient):
         """
         # ── Pass 1: rebuild in-memory access flags ────────────────────────────
         # Reset first so a disconnected/revoked item is handled correctly.
-        self.has_p_meter_unlock  = False
-        self.has_fortress_access = False
-        self.has_castle_access   = False
+        self.has_p_meter_unlock = False
+        self.unlocked_worlds = set()
+        self.fortress_access_worlds = set()
+        self.castle_access_worlds = set()
 
         for network_item in ctx.items_received:
             item_name = ITEM_CODE_TO_NAME.get(network_item.item)
             if item_name == "P-Meter Unlock":
                 self.has_p_meter_unlock = True
-            elif item_name == "World 1 Fortress Access":
-                self.has_fortress_access = True
-            elif item_name == "World 1 Castle Access":
-                self.has_castle_access = True
+            elif item_name in WORLD_UNLOCK_ITEM_NAMES:
+                self.unlocked_worlds.add(WORLD_UNLOCK_ITEM_NAMES.index(item_name))
+            elif item_name in FORTRESS_ACCESS_ITEM_NAMES:
+                self.fortress_access_worlds.add(FORTRESS_ACCESS_ITEM_NAMES.index(item_name))
+            elif item_name in CASTLE_ACCESS_ITEM_NAMES:
+                self.castle_access_worlds.add(CASTLE_ACCESS_ITEM_NAMES.index(item_name))
+
+        # The Lua connector still enforces only the original World 1 physical
+        # gates.  Keep these booleans as the World 1 view of the generalized
+        # access sets until runtime gate tables exist for every overworld.
+        self.has_fortress_access = 0 in self.fortress_access_worlds
+        self.has_castle_access = 0 in self.castle_access_worlds
 
         # ── Pass 2: physically apply items we haven't delivered yet ───────────
         while self.received_index < len(ctx.items_received):
@@ -341,12 +360,7 @@ class SMB3BizHawkClient(BizHawkClient):
             elif item_name in LIFE_ITEM_VALUES:
                 lives = await self.give_lives(ctx, lives, LIFE_ITEM_VALUES[item_name])
 
-            elif item_name in (
-                "P-Meter Unlock",
-                "World 1 Fortress Access",
-                "World 1 Castle Access",
-                "Beat World 1 Castle",
-            ):
+            elif item_name in ACCESS_ITEM_NAMES or item_name == "Beat World 1 Castle":
                 # In-memory flags set in Pass 1; event item needs no game write.
                 pass
 
@@ -530,18 +544,24 @@ class SMB3BizHawkClient(BizHawkClient):
 
     # ─── Check / goal detection ───────────────────────────────────────────────
 
-    async def check_world_1_locations(
+    async def check_overworld_locations(
         self,
         ctx: "BizHawkClientContext",
+        current_world: int,
         progress_flags: bytes,
     ) -> None:
         """
-        Reads the World 1 completion bits from the buffered SRAM snapshot and
-        sends any newly set locations to the AP server.
+        Reads completion bits from the current world's buffered SRAM snapshot
+        and sends any newly set locations to the AP server.
+
+        SMB3 reuses the same 64-byte completion buffer for each overworld map,
+        so the same byte/bit can mean different checks in different worlds.
+        The current world counter selects the correct per-map table.
         """
         locations_to_send: list[int] = []
+        progress_flags_for_world = PROGRESS_FLAGS_BY_WORLD.get(current_world, {})
 
-        for location_id, (offset, mask) in WORLD_1_PROGRESS_FLAGS.items():
+        for location_id, (offset, mask) in progress_flags_for_world.items():
             if location_id not in ctx.missing_locations:
                 continue
             if progress_flags[offset] & mask:
