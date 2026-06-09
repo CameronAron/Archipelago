@@ -27,7 +27,7 @@ from .constants import (
     AP_RECEIVED_INDEX_ADDR,
     AP_RECEIVED_INDEX_SIZE,
     AP_STARTING_WORLD_ADDR,
-    WORLD_1_PROGRESS_FLAGS,
+    PROGRESS_FLAGS_BY_WORLD,
     CASTLE_LOCATION_ID,
     ITEM_CODE_TO_NAME,
     INVENTORY_ITEM_VALUES,
@@ -178,7 +178,7 @@ class SMB3BizHawkClient(BizHawkClient):
 
         await self.push_lua_state(ctx)
         await self.enforce_p_meter_lock(ctx, p_meter)
-        await self.check_world_1_locations(ctx, progress_flags)
+        await self.check_overworld_locations(ctx, current_world, progress_flags)
         await self.check_goal(ctx, current_world)
 
         self.previous_world = current_world
@@ -530,18 +530,24 @@ class SMB3BizHawkClient(BizHawkClient):
 
     # ─── Check / goal detection ───────────────────────────────────────────────
 
-    async def check_world_1_locations(
+    async def check_overworld_locations(
         self,
         ctx: "BizHawkClientContext",
+        current_world: int,
         progress_flags: bytes,
     ) -> None:
         """
-        Reads the World 1 completion bits from the buffered SRAM snapshot and
-        sends any newly set locations to the AP server.
+        Reads completion bits from the current world's buffered SRAM snapshot
+        and sends any newly set locations to the AP server.
+
+        SMB3 reuses the same 64-byte completion buffer for each overworld map,
+        so the same byte/bit can mean different checks in different worlds.
+        The current world counter selects the correct per-map table.
         """
         locations_to_send: list[int] = []
+        progress_flags_for_world = PROGRESS_FLAGS_BY_WORLD.get(current_world, {})
 
-        for location_id, (offset, mask) in WORLD_1_PROGRESS_FLAGS.items():
+        for location_id, (offset, mask) in progress_flags_for_world.items():
             if location_id not in ctx.missing_locations:
                 continue
             if progress_flags[offset] & mask:
