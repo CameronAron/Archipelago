@@ -2,20 +2,18 @@ from collections.abc import Mapping
 from typing import Any
 
 from worlds.AutoWorld import World
+from BaseClasses import ItemClassification
 
 from . import items, locations, regions, rules, web
 from .options import SMB3Options
-
-from BaseClasses import ItemClassification
 
 
 class SMB3World(World):
     """
     Archipelago integration for Super Mario Bros. 3.
 
-    Current scope: World 1 vertical slice (7 checks + goal).
-    Step 1 adds the AP SRAM foundation and reconnect-safety.
-    Full multi-world expansion follows in Step 2.
+    Step 2 scope: all 8 worlds (71 shuffled checks + World 1 Castle goal).
+    Starting world is always World 1 for now; Step 3 will randomise this.
     """
 
     game = "Super Mario Bros. 3"
@@ -32,14 +30,8 @@ class SMB3World(World):
     # ─── Generation lifecycle ─────────────────────────────────────────────────
 
     def generate_early(self) -> None:
-        """
-        Per-slot pre-generation setup.
-
-        Starting world is always World 1 (index 0) in this slice.
-        In Step 2 this will become a randomised option drawn from whichever
-        worlds are enabled, and the value will drive both the game's world
-        counter initialisation and the initial map node setup.
-        """
+        # Starting world is always 0 (World 1) in this slice.
+        # Step 3 will turn this into a randomised slot option.
         self.starting_world: int = 0
 
     def create_regions(self) -> None:
@@ -71,11 +63,6 @@ class SMB3World(World):
     # ─── Slot data ────────────────────────────────────────────────────────────
 
     def fill_slot_data(self) -> Mapping[str, Any]:
-        """
-        Data sent to the client on connect.  The client reads starting_world
-        to initialise the AP SRAM block and (in Step 2) to set the in-game
-        world counter when a new AP save is detected.
-        """
         return {
             "starting_world": self.starting_world,
         }
