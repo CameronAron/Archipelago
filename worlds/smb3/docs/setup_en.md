@@ -5,7 +5,7 @@
 - A working Archipelago source checkout
 - BizHawk
 - A valid USA 1.0 Super Mario Bros. 3 ROM
-- The SMB3 client/connector files for this world
+- The SMB3 APWorld/LUA connector files for this world
 
 ## Current Status
 
