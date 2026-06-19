@@ -7,8 +7,6 @@ This is a work-in-progress Archipelago integration for **Super Mario Bros. 3**.
 The current implementation is a very small vertical slice focused only on **World 1 & 2**.
 
 ## Current Scope
-
-- World 2 only
 - Goal is clearing World 2 Castle
 - Minimal item pool
 
