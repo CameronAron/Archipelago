@@ -4,7 +4,7 @@
 
 This is a work-in-progress Archipelago integration for **Super Mario Bros. 3**.
 
-The current implementation is a very small vertical slice focused only on **World 1**.
+The current implementation is a very small vertical slice focused only on **World 1 & 2**.
 
 ## Current Scope
 
