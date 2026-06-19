@@ -8,8 +8,15 @@ The current implementation is a very small vertical slice focused only on **Worl
 
 ## Current Scope
 
-- World 1 only
-- 7 checks
-- Goal is clearing World 1 Castle
+- World 2 only
+- Goal is clearing World 2 Castle
 - Minimal item pool
-- BizHawk-based play is planned
+
+## Known issues
+- Logic is messed up for castle/fortress access unlocks
+- Because it's untested, check memory addresses might be screwed up as well for world 2
+
+## Planned Features
+- Rom patch to allow for more options (warping, saving, level rando, etc.)
+- Remaining worlds
+- YAML options
