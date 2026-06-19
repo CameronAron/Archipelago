@@ -28,7 +28,6 @@ def _castle_rule(world, wn):
                           and state.has(f"World {wn} Fortress Access", world.player)
                           and state.has(f"World {wn} Castle Access", world.player))
 
-# Post-fortress numbered levels confirmed from World 1 map layout.
 # Worlds 2-8 pending overworld map verification.
 POST_FORTRESS_LEVELS: frozenset[str] = frozenset({"World 1-5 Clear","World 1-6 Clear"})
 

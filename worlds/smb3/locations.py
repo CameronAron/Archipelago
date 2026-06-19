@@ -4,6 +4,7 @@ from BaseClasses import Location
 if TYPE_CHECKING:
     from .world import SMB3World
 
+# Level check location IDs (Worlds 2-8 are not tested to be completely acurate yet)
 LOCATION_NAME_TO_ID: dict[str, int] = {
     "World 1-1 Clear":2000,"World 1-2 Clear":2001,"World 1-3 Clear":2002,
     "World 1-4 Clear":2003,"World 1-5 Clear":2004,"World 1-6 Clear":2005,
@@ -34,7 +35,8 @@ LOCATION_NAME_TO_ID: dict[str, int] = {
     "World 7 Fortress 1 Clear":2067,"World 7 Fortress 2 Clear":2068,
     "World 8-1 Clear":2069,"World 8-2 Clear":2070,"World 8 Fortress Clear":2071,
 }
-# World 2 Castle Clear (2072) is locked — holds the goal event, not shuffled
+
+# World 2 Castle Clear is the current goal - frozen check
 SHUFFLED_LOCATION_NAMES: frozenset[str] = frozenset(
     n for n in LOCATION_NAME_TO_ID if n != "World 2 Castle Clear"
 )

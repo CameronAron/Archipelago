@@ -99,7 +99,7 @@ class SMB3BizHawkClient(BizHawkClient):
         await self.check_castle_transitions(ctx, current_world)
         self.previous_world = current_world
 
-    # ── AP SRAM ───────────────────────────────────────────────────────────────
+    # AP SRAM
     async def setup_ap_sram(self, ctx) -> None:
         try:
             r = await bizhawk.read(ctx.bizhawk_ctx,
@@ -136,9 +136,8 @@ class SMB3BizHawkClient(BizHawkClient):
         except bizhawk.RequestFailedError:
             pass
 
-    # ── Item processing ───────────────────────────────────────────────────────
+    # Item processing
     async def process_received_items(self, ctx, lives, inventory):
-        # Pass 1: rebuild all flags (no game writes)
         self.has_p_meter_unlock = False
         self.unlocked_worlds = self.fortress_access_worlds = self.castle_access_worlds = set()
         for ni in ctx.items_received:
@@ -149,7 +148,7 @@ class SMB3BizHawkClient(BizHawkClient):
             elif n in CASTLE_ACCESS_ITEM_NAMES:   self.castle_access_worlds.add(CASTLE_ACCESS_ITEM_NAMES.index(n))
         self.has_fortress_access = 0 in self.fortress_access_worlds
         self.has_castle_access   = 0 in self.castle_access_worlds
-        # Pass 2: physically deliver new items
+
         while self.received_index < len(ctx.items_received):
             ni = ctx.items_received[self.received_index]
             n  = ITEM_CODE_TO_NAME.get(ni.item)
@@ -205,7 +204,7 @@ class SMB3BizHawkClient(BizHawkClient):
             return inventory
         return bytes(lst) if ok else inventory
 
-    # ── Lua gate sync ─────────────────────────────────────────────────────────
+    # Lua gate sync
     async def push_lua_state(self, ctx) -> None:
         t = (self.has_fortress_access, self.has_castle_access, self.has_p_meter_unlock)
         if self.last_sent_lua_state == t: return
@@ -221,7 +220,7 @@ class SMB3BizHawkClient(BizHawkClient):
             return
         self.last_sent_lua_state = t
 
-    # ── P-Meter lock ──────────────────────────────────────────────────────────
+    # P-Meter lock
     async def enforce_p_meter_lock(self, ctx, p_meter) -> None:
         if self.has_p_meter_unlock or p_meter == 0: return
         try:
@@ -229,7 +228,7 @@ class SMB3BizHawkClient(BizHawkClient):
                 [(P_METER_ADDR, bytes([0x00]), SYSTEM_BUS_DOMAIN)])
         except bizhawk.RequestFailedError: pass
 
-    # ── Location checks ───────────────────────────────────────────────────────
+    # Location checks
     async def check_overworld_locations(self, ctx, current_world, progress_flags) -> None:
         flags = PROGRESS_FLAGS_BY_WORLD.get(current_world)
         if not flags: return
@@ -239,21 +238,16 @@ class SMB3BizHawkClient(BizHawkClient):
             await ctx.send_msgs([{"cmd":"LocationChecks","locations":sends}])
 
     async def check_castle_transitions(self, ctx, current_world) -> None:
-        """
-        Detects castle completions via world-counter transitions:
-          0→1  World 1 Castle Clear  (regular shuffled check)
-          1→2  World 2 Castle Clear  (goal)
-        """
         if self.previous_world is None: return
         prev = self.previous_world
 
-        # World 1 Castle — regular check, sends location only
+        # World 1 Castle
         if prev == 0 and current_world == 1:
             if WORLD_1_CASTLE_LOCATION_ID in ctx.missing_locations:
                 await ctx.send_msgs([{"cmd":"LocationChecks",
                                        "locations":[WORLD_1_CASTLE_LOCATION_ID]}])
 
-        # World 2 Castle — goal
+        # World 2 Castle — current goal
         if not ctx.finished_game and prev == 1 and current_world == 2:
             msgs = []
             if WORLD_2_CASTLE_LOCATION_ID in ctx.missing_locations:

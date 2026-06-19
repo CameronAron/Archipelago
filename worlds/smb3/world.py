@@ -9,13 +9,6 @@ from .options import SMB3Options
 
 
 class SMB3World(World):
-    """
-    Archipelago integration for Super Mario Bros. 3.
-
-    Step 2 scope: all 8 worlds (71 shuffled checks + World 1 Castle goal).
-    Starting world is always World 1 for now; Step 3 will randomise this.
-    """
-
     game = "Super Mario Bros. 3"
     web  = web.SMB3WebWorld()
 
@@ -27,8 +20,7 @@ class SMB3World(World):
 
     origin_region_name = "Overworld"
 
-    # ─── Generation lifecycle ─────────────────────────────────────────────────
-
+    # Generation lifecycle
     def generate_early(self) -> None:
         # Starting world is always 0 (World 1) in this slice.
         # Step 3 will turn this into a randomised slot option.
@@ -44,8 +36,7 @@ class SMB3World(World):
     def create_items(self) -> None:
         items.create_items(self)
 
-    # ─── Item factory helpers ─────────────────────────────────────────────────
-
+    # Item factory helpers
     def create_item(self, name: str) -> items.SMB3Item:
         return items.create_item(self, name)
 
@@ -60,8 +51,7 @@ class SMB3World(World):
     def get_filler_item_name(self) -> str:
         return items.get_filler_item_name(self)
 
-    # ─── Slot data ────────────────────────────────────────────────────────────
-
+    # Slot data
     def fill_slot_data(self) -> Mapping[str, Any]:
         return {
             "starting_world": self.starting_world,
