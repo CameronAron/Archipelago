@@ -1,7 +1,7 @@
 # SMB3 Archipelago — Flag Research
 
 ## Source
-Flags derived from SMB3 disassembly (smb3-master):
+Flags derived from SMB3 disassembly:
   byte_offset = W<N>_ByScrCol[tile_index]
   mask        = ROW_TO_MASK[ByRowType & 0xF0]
   where ROW_TO_MASK = {0x20:0x80, 0x30:0x40, 0x40:0x20, 0x50:0x10,
