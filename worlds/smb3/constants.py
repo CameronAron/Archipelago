@@ -7,7 +7,7 @@ SYSTEM_BUS_DOMAIN = "System Bus"
 RAM_DOMAIN        = "RAM"
 ROM_DOMAIN        = "PRG ROM"
 
-# ─── Runtime RAM ─────────────────────────────────────────────────────────────
+# Runtime RAM
 CURRENT_WORLD_ADDR = 0x0727   # u8 — 0-based world index (0 = World 1)
 LIVES_ADDR         = 0x0736
 OVERWORLD_Y_ADDR   = 0x0075
@@ -17,14 +17,14 @@ INPUT_PRESSED_ADDR = 0x00F5
 INPUT_HELD_ADDR    = 0x00F7
 A_BUTTON_MASK      = 0x80
 
-# ─── Game SRAM ────────────────────────────────────────────────────────────────
+# Game SRAM
 PROGRESS_FLAGS_ADDR = 0x7D00
 PROGRESS_FLAGS_SIZE = 0x40    # 64 bytes covers all world flags
 
 INVENTORY_ADDR = 0x7D80
 INVENTORY_SIZE = 0x1C
 
-# ─── Archipelago SRAM Block ($7F00–$7F1F) ─────────────────────────────────────
+# Archipelago SRAM Block ($7F00–$7F1F)
 AP_SRAM_BASE           = 0x7F00
 AP_SRAM_BLOCK_SIZE     = 0x20
 
@@ -38,32 +38,16 @@ AP_RECEIVED_INDEX_SIZE = 2
 AP_STARTING_WORLD_ADDR = AP_SRAM_BASE + 0x06
 AP_STARTING_WORLD_SIZE = 1
 
-# ─── World-1 Lua gate coordinates ────────────────────────────────────────────
+# World-1 Lua gate coordinates
 FORTRESS_COORD_Y = 96
 FORTRESS_COORD_X = 96
 CASTLE_COORD_Y   = 128
 CASTLE_COORD_X   = 192
 
-# ─── Overworld completion flags ───────────────────────────────────────────────
-#
-# Maps world index (0-based) → location_id → (byte_offset, bit_mask).
-#
-# Derived directly from the SMB3 disassembly (smb3-master/PRG/maps/World<N>S.asm):
-#   byte_offset = W<N>_ByScrCol[tile_index]
-#   bit_mask    = ROW_TO_MASK[W<N>_ByRowType[tile_index] & 0xF0]
-#   where ROW_TO_MASK = {0x20:0x80, 0x30:0x40, 0x40:0x20, 0x50:0x10,
-#                        0x60:0x08, 0x70:0x04, 0x80:0x02, other:0x01}
-#
-# The game reuses the same 64-byte SRAM buffer for every world's overworld map,
-# so the same (offset, mask) can appear in multiple worlds without conflict.
-# The client reads flags only while CURRENT_WORLD_ADDR matches the target world.
-#
-# Castle completions (World 1 Castle, World 2 Castle) are detected via the
-# CURRENT_WORLD_ADDR counter transition (N→N+1) instead of SRAM flags.
-
+# Overworld completion flags
 PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
 
-    # ── World 1 (confirmed against original implementation) ──────────────────
+    # World 1
     0: {
         LOCATION_NAME_TO_ID["World 1-1 Clear"]:        (0x04, 0x80),
         LOCATION_NAME_TO_ID["World 1-2 Clear"]:        (0x08, 0x80),
@@ -72,10 +56,10 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
         LOCATION_NAME_TO_ID["World 1 Fortress Clear"]: (0x06, 0x08),
         LOCATION_NAME_TO_ID["World 1-5 Clear"]:        (0x04, 0x01),
         LOCATION_NAME_TO_ID["World 1-6 Clear"]:        (0x08, 0x01),
-        # "World 1 Castle Clear" detected via counter 0→1 (not a flag)
+        # "World 1 Castle Clear" detected via counter 0→1
     },
 
-    # ── World 2 ───────────────────────────────────────────────────────────────
+    # World 2
     1: {
         LOCATION_NAME_TO_ID["World 2-2 Clear"]:         (0x08, 0x80),
         LOCATION_NAME_TO_ID["World 2-3 Clear"]:         (0x0C, 0x20),
@@ -84,10 +68,10 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
         LOCATION_NAME_TO_ID["World 2-4 Clear"]:         (0x12, 0x80),
         LOCATION_NAME_TO_ID["World 2-5 Clear"]:         (0x10, 0x02),
         LOCATION_NAME_TO_ID["World 2 Pyramid Clear"]:   (0x14, 0x02),
-        # "World 2 Castle Clear" detected via counter 1→2 (goal location)
+        # "World 2 Castle Clear" detected via counter 1→2 (goal)
     },
 
-    # ── World 3 ───────────────────────────────────────────────────────────────
+    # World 3
     2: {
         LOCATION_NAME_TO_ID["World 3-3 Clear"]:              (0x08, 0x80),
         LOCATION_NAME_TO_ID["World 3-2 Clear"]:              (0x04, 0x20),
@@ -102,7 +86,7 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
         LOCATION_NAME_TO_ID["World 3 Fortress 2 Clear"]:     (0x14, 0x08),
     },
 
-    # ── World 4 ───────────────────────────────────────────────────────────────
+    # World 4
     3: {
         LOCATION_NAME_TO_ID["World 4-6 Clear"]:              (0x0C, 0x20),
         LOCATION_NAME_TO_ID["World 4 Fortress 2 Clear"]:     (0x0E, 0x08),
@@ -114,7 +98,7 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
         LOCATION_NAME_TO_ID["World 4-1 Clear"]:              (0x1C, 0x02),
     },
 
-    # ── World 5 ───────────────────────────────────────────────────────────────
+    # World 5
     4: {
         LOCATION_NAME_TO_ID["World 5-2 Clear"]:              (0x04, 0x80),
         LOCATION_NAME_TO_ID["World 5-3 Clear"]:              (0x08, 0x80),
@@ -129,7 +113,7 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
         LOCATION_NAME_TO_ID["World 5-6 Clear"]:              (0x1E, 0x01),
     },
 
-    # ── World 6 ───────────────────────────────────────────────────────────────
+    # World 6
     5: {
         LOCATION_NAME_TO_ID["World 6-2 Clear"]:              (0x0A, 0x20),
         LOCATION_NAME_TO_ID["World 6-1 Clear"]:              (0x06, 0x08),
@@ -146,7 +130,7 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
         LOCATION_NAME_TO_ID["World 6-10 Clear"]:             (0x24, 0x02),
     },
 
-    # ── World 7 ───────────────────────────────────────────────────────────────
+    # World 7
     6: {
         LOCATION_NAME_TO_ID["World 7 Fortress 1 Clear"]:     (0x0F, 0x40),
         LOCATION_NAME_TO_ID["World 7-1 Clear"]:              (0x02, 0x10),
@@ -161,7 +145,7 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
         LOCATION_NAME_TO_ID["World 7 Fortress 2 Clear"]:     (0x1C, 0x04),
     },
 
-    # ── World 8 ───────────────────────────────────────────────────────────────
+    # World 8
     7: {
         LOCATION_NAME_TO_ID["World 8-1 Clear"]:        (0x24, 0x04),
         LOCATION_NAME_TO_ID["World 8 Fortress Clear"]: (0x28, 0x04),
@@ -172,7 +156,7 @@ PROGRESS_FLAGS_BY_WORLD: dict[int, dict[int, tuple[int, int]]] = {
 # Backward-compatible alias
 WORLD_1_PROGRESS_FLAGS = PROGRESS_FLAGS_BY_WORLD[0]
 
-# ─── Access item name groups ──────────────────────────────────────────────────
+# Access item name groups
 WORLD_UNLOCK_ITEM_NAMES    = tuple(f"World {w} Unlock"          for w in range(1, 9))
 FORTRESS_ACCESS_ITEM_NAMES = tuple(f"World {w} Fortress Access" for w in range(1, 9))
 CASTLE_ACCESS_ITEM_NAMES   = tuple(f"World {w} Castle Access"   for w in range(1, 9))
@@ -184,7 +168,7 @@ ACCESS_ITEM_NAMES = (
     *CASTLE_ACCESS_ITEM_NAMES,
 )
 
-# ─── Item codes ───────────────────────────────────────────────────────────────
+# Item codes
 ITEM_CODE_TO_NAME: dict[int, str] = {
     1000: "P-Meter Unlock",
     1001: "World 1 Fortress Access",
@@ -208,7 +192,7 @@ for _name in (*WORLD_UNLOCK_ITEM_NAMES, *FORTRESS_ACCESS_ITEM_NAMES, *CASTLE_ACC
         _next_id += 1
 del _name, _next_id
 
-# ─── Physical item tables ─────────────────────────────────────────────────────
+# Physical item tables
 INVENTORY_ITEM_VALUES: dict[str, int] = {
     "Mushroom":     0x01,
     "Fire Flower":  0x02,
