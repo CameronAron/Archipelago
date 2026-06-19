@@ -12,6 +12,7 @@ The current implementation is a very small vertical slice focused only on **Worl
 
 ## Known issues
 - Logic is messed up for castle/fortress access unlocks
+- World 2+ fortress' and castles currently dont gate access 
 - Because it's untested, check memory addresses might be screwed up as well for world 2
 
 ## Planned Features
